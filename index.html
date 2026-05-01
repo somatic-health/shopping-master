@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>採購達人大挑戰 - 離線單機版</title>
+    
+    <!-- TensorFlow.js & Pose Detection (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.17.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.17.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.17.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3"></script>
+
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap');
+        :root { --game-bg: #FDF8F1; --font-sans: 'Inter', system-ui, sans-serif; }
+        body { font-family: var(--font-sans); background-color: var(--game-bg); margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        .animate-slide-up { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-spin-custom { animation: spin 2s linear infinite; }
+        .hidden-el { display: none !important; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        #gameCanvas { image-rendering: auto; }
+        @media (orientation: landscape) { 
+            .landscape-hidden { display: none !important; } 
+            .landscape-max-h { max-height: 85vh !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app" class="relative min-h-[100dvh] bg-[#FDF8F1] font-sans text-stone-800 p-1 md:p-8 flex flex-col items-center">
+        
+        <!-- Audio Elements -->
+        <audio id="bgMusic" loop preload="auto"></audio>
+        <audio id="correctSfx" src="https://assets.mixkit.co/active_storage/sfx/2000/2000-preview.mp3" preload="metadata"></audio>
+        <audio id="incorrectSfx" src="https://assets.mixkit.co/active_storage/sfx/2016/2016-preview.mp3" preload="metadata"></audio>
+
+        <!-- Header -->
+        <header class="max-w-4xl w-full text-center mb-2 md:mb-10 px-4 landscape-hidden">
+            <div class="flex flex-col items-center gap-1 mb-1 md:mb-4">
+                <div class="px-3 py-1 md:px-4 md:py-1.5 bg-stone-100 rounded-full text-[10px] md:text-sm font-medium text-stone-600">
+                    數位教學專業設計
+                </div>
+            </div>
+            <h1 class="text-2xl md:text-6xl font-black tracking-tight text-stone-900 mb-0 md:mb-1">採購達人大挑戰</h1>
+        </header>
+
+        <!-- Main Game Area -->
+        <main class="relative max-w-6xl w-full grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-2 md:gap-8 flex-1">
+            <section class="space-y-4 md:space-y-6 w-full max-w-4xl mx-auto px-1 md:px-0 flex flex-col items-center">
+                <div class="relative rounded-[1.5rem] md:rounded-[2.5rem] overflow-hidden shadow-2xl border-[4px] md:border-[12px] border-white bg-stone-200 w-full max-h-[75vh] landscape-max-h aspect-[4/3] flex items-center justify-center">
+                    <video id="videoElement" class="hidden-el" autoplay playsinline muted></video>
+                    <canvas id="gameCanvas" width="640" height="480" class="w-full h-full object-cover"></canvas>
+
+                    <div id="idleOverlay" class="absolute inset-0 bg-stone-900/80 backdrop-blur-sm flex flex-col items-center justify-start text-white text-center p-4 md:p-10 z-30 animate-fade-in overflow-y-auto scrollbar-hide py-10">
+                        <div id="loadingView" class="flex flex-col items-center gap-4 my-auto">
+                            <div class="w-12 h-12 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin-custom"></div>
+                            <p class="text-lg font-bold">智慧偵測模組啟動中...</p>
+                        </div>
+                        <div id="configView" class="hidden-el space-y-4 md:space-y-6 max-w-md w-full my-auto py-4">
+                            <div class="bg-white/10 p-4 md:p-8 rounded-[2rem] border border-white/10 text-white shadow-inner">
+                                <h3 class="text-xl md:text-3xl font-black mb-4">今天想買什麼呢？</h3>
+                                <div class="space-y-2 text-left text-sm md:text-base">
+                                    <div class="flex gap-3 items-center"><span class="text-emerald-400 font-bold">✓</span><p class="font-bold">抓取天然鮮食 (高麗菜/蘋果等)</p></div>
+                                    <div class="flex gap-3 items-center"><span class="text-rose-500 font-bold">✕</span><p class="font-bold">避開加工甜食 (汽水/甜甜圈等)</p></div>
+                                </div>
+                            </div>
+                            <div class="bg-white/5 p-4 rounded-2xl border border-white/10">
+                                <p class="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-2">🎵 選一個背景音樂 (可留空)</p>
+                                <input type="file" id="musicUpload" accept="audio/*" class="text-xs text-stone-400 block w-full file:mr-4 file:py-1 file:px-4 file:rounded-full file:border-0 file:text-[10px] file:font-semibold file:bg-white/10 file:text-white hover:file:bg-white/20">
+                            </div>
+                            <div class="bg-white/10 p-3 md:p-6 rounded-2xl border border-white/10 text-white space-y-2 font-mono text-[10px]">
+                                <p class="font-bold uppercase tracking-widest opacity-60 mb-1">⏰ 挑戰時間：<span id="selectedTimeText">1 分鐘</span></p>
+                                <div id="timeScale" class="flex flex-wrap justify-center gap-1.5 md:gap-2"></div>
+                            </div>
+                            <button id="startBtn" class="group relative w-full py-4 bg-indigo-600 rounded-2xl font-black text-xl hover:bg-indigo-700 transition-all text-white shadow-xl shadow-indigo-500/30">▶️ 開始挑戰</button>
+                        </div>
+                    </div>
+
+                    <div id="endOverlay" class="hidden-el absolute inset-0 z-50 bg-stone-900/95 backdrop-blur-sm flex items-center justify-center p-4">
+                        <div class="bg-white rounded-[2rem] p-6 text-center shadow-2xl w-full max-w-sm animate-slide-up">
+                            <div class="w-16 h-16 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-4 text-3xl">🎉</div>
+                            <h2 class="text-xl md:text-3xl font-black text-stone-900 mb-1">精采的挑戰！</h2>
+                            <div class="grid grid-cols-2 gap-4 my-8">
+                                <div><p class="text-[10px] font-black text-stone-400 uppercase">得分</p><p id="finalScore" class="text-4xl font-black text-indigo-600">0</p></div>
+                                <div><p class="text-[10px] font-black text-stone-400 uppercase">件數</p><p id="finalHealthy" class="text-4xl font-black text-emerald-500">0</p></div>
+                            </div>
+                            <button id="restartBtn" class="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xl shadow-lg hover:bg-indigo-700 mb-3">🔄 再次挑戰</button>
+                            <button id="homeBtn" class="text-stone-400 font-bold text-xs hover:underline">返回首頁</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 w-full">
+                    <div class="bg-white p-4 rounded-3xl shadow-sm border border-stone-200 text-center"><p class="text-stone-400 text-[10px] font-bold uppercase mb-1">累計採購</p><p id="statTotalHealthy" class="text-2xl font-black">0</p></div>
+                    <div class="bg-white p-4 rounded-3xl shadow-sm border border-stone-200 text-center"><p class="text-stone-400 text-[10px] font-bold uppercase mb-1">連續運動</p><p id="statConsecutive" class="text-2xl font-black">0</p></div>
+                    <div class="bg-white p-4 rounded-3xl shadow-sm border border-stone-200 text-center"><p class="text-stone-400 text-[10px] font-bold uppercase mb-1">最佳場次</p><p id="statMaxInOne" class="text-2xl font-black">0</p></div>
+                    <div class="bg-white p-4 rounded-3xl shadow-sm border border-stone-200 text-center"><p class="text-stone-400 text-[10px] font-bold uppercase mb-1">累計場次</p><p id="statGamesPlayed" class="text-2xl font-black">0</p></div>
+                </div>
+            </section>
+
+            <aside class="space-y-6">
+                <div class="bg-stone-900 rounded-[2rem] p-6 text-white shadow-xl relative overflow-hidden">
+                    <div class="absolute top-4 right-4 z-20 flex gap-2">
+                        <button id="toggleMuteBtn" class="p-2 bg-white/10 rounded-xl text-sm">🔊</button>
+                        <button id="endGameBtn" class="hidden-el px-3 py-1 bg-rose-500 text-white rounded-xl text-xs font-bold">結束</button>
+                    </div>
+                    <div class="space-y-6">
+                        <div><p class="text-indigo-300 text-[10px] font-bold uppercase">⏰ 剩餘時間</p><p id="hudTimeLeft" class="text-4xl font-black tabular-nums">1:00</p></div>
+                        <div><p class="text-emerald-300 text-[10px] font-bold uppercase">🛒 當前得分</p><p id="hudScore" class="text-4xl font-black tabular-nums">0</p></div>
+                        <div><p class="text-rose-300 text-[10px] font-bold mb-2 uppercase">❤️ 剩餘體力</p><div id="healthContainer" class="flex gap-1.5"></div></div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-[2rem] p-6 shadow-sm border border-stone-200">
+                    <h3 class="text-sm font-black uppercase text-stone-400 mb-4">🏅 榮譽成就</h3>
+                    <div id="achievementList" class="space-y-4"></div>
+                </div>
+            </aside>
+        </main>
+        
+        <footer class="mt-8 text-stone-400 text-[10px] font-bold">開發製作：數位互動體驗設計者 儲良均老師</footer>
+    </div>
+
+    <!-- Achievement Toast -->
+    <div id="toast" class="hidden-el fixed bottom-10 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-4 bg-stone-900 text-white p-4 rounded-3xl shadow-2xl border border-white/10 animate-fade-in">
+        <div id="toastEmoji" class="text-3xl">🏆</div>
+        <div>
+            <p class="text-stone-400 text-[10px] font-bold uppercase mb-0.5">解鎖成就！</p>
+            <p id="toastTitle" class="text-lg font-black">成就標題</p>
+        </div>
+    </div>
+
+    <script>
+        const GAME_WIDTH = 640; const GAME_HEIGHT = 480; const COLLISION_RADIUS = 50; const BASE_SPAWN_INTERVAL = 1500;
+        const ITEM_FALL_SPEED = 3.5; const STORAGE_KEY = 'standalone-market-stats';
+        const AUDIO_DB_NAME = 'LocalMusicDB'; const AUDIO_STORE_NAME = 'audio';
+        const ITEMS = [
+            { label: '高麗菜', emoji: '🥬', type: 'healthy' }, { label: '蘋果', emoji: '🍎', type: 'healthy' },
+            { label: '紅蘿蔔', emoji: '🥕', type: 'healthy' }, { label: '香蕉', emoji: '🍌', type: 'healthy' },
+            { label: '糖果', emoji: '🍬', type: 'unhealthy' }, { label: '汽水', emoji: '🥤', type: 'unhealthy' },
+            { label: '甜甜圈', emoji: '🍩', type: 'unhealthy' },
+        ];
+        const ACHIEVEMENTS = [
+            { id: 'rookie', title: '初級採購員', desc: '累計抓取 10 個健康食物', emoji: '🛒', color: 'bg-blue-500' },
+            { id: 'expert', title: '健康達人', desc: '單次遊戲抓取 20 個健康食物', emoji: '🌟', color: 'bg-amber-500' },
+            { id: 'master', title: '分類大師', desc: '得分 100 且無失誤', emoji: '🏆', color: 'bg-emerald-500' }
+        ];
+
+        let stats = { totalHealthyItems: 0, totalGamesPlayed: 0, maxHealthyInOneSession: 0, lastPlayDate: '', consecutiveDays: 0, unlockedIds: [] };
+        let gameState = 'idle'; let score = 0; let health = 3; let timeLeft = 60; let selectedTimeLimit = 60;
+        let gameItems = []; let handPositions = []; let isMuted = false; let sessionHealthy = 0; let sessionUnhealthy = 0;
+        let detector = null; let requestRef = null; let lastSpawnTime = 0; let secondTimer = null;
+        let particles = []; // 新增碰撞粒子效果
+
+        const video = document.getElementById('videoElement'); const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d'); const bgMusic = document.getElementById('bgMusic');
+        const correctSfx = document.getElementById('correctSfx'); const incorrectSfx = document.getElementById('incorrectSfx');
+
+        // 安全播放音效
+        function playSfx(audio) {
+            if (isMuted) return;
+            audio.currentTime = 0;
+            audio.play().catch(e => console.warn("Audio playback blocked:", e));
+        }
+
+        async function init() {
+            loadStats(); setupIndexedDB(); setupUI();
+            
+            const cameraPromise = navigator.mediaDevices.getUserMedia({ 
+                video: { width: 640, height: 480, facingMode: 'user' }, 
+                audio: false 
+            }).then(stream => {
+                video.srcObject = stream;
+                return video.play();
+            }).catch(e => {
+                console.warn("Camera init failed", e);
+                return false;
+            });
+
+            try {
+                if (typeof tf === 'undefined') throw new Error("TF_NOT_LOADED");
+                await tf.setBackend('webgl');
+                await tf.ready();
+                detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, { 
+                    modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+                    enableSmoothing: true
+                });
+
+                if (video.readyState >= 2) await detector.estimatePoses(video);
+                await cameraPromise;
+                
+                document.getElementById('loadingView').classList.add('hidden-el');
+                document.getElementById('configView').classList.remove('hidden-el');
+            } catch (e) {
+                console.warn("AI Init Error:", e);
+                document.getElementById('loadingView').innerHTML = `
+                    <div class="space-y-4">
+                        <p class="text-red-400 text-sm font-bold">⚠️ 互動技術啟動失敗</p>
+                        <button onclick="window.location.reload()" class="px-6 py-2 bg-white text-stone-900 rounded-full font-bold text-xs">重試</button>
+                    </div>`;
+            }
+        }
+
+        function loadStats() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) stats = JSON.parse(saved);
+            updateStatsUI(); renderAchievements();
+        }
+
+        function setupUI() {
+            const container = document.getElementById('timeScale'); container.innerHTML = '';
+            [60, 120, 180, -1].forEach(time => {
+                const btn = document.createElement('button');
+                btn.className = `px-3 py-1 rounded-lg text-[10px] font-bold transition-all ${selectedTimeLimit === time ? 'bg-indigo-500 text-white' : 'bg-white/10 hover:bg-white/20'}`;
+                btn.textContent = time === -1 ? '不限時' : `${time/60} 分鐘`;
+                btn.onclick = () => { selectedTimeLimit = time; document.getElementById('selectedTimeText').textContent = time === -1 ? '不限時間' : `${time/60} 分鐘`; setupUI(); };
+                container.appendChild(btn);
+            });
+            document.getElementById('startBtn').onclick = startGame;
+            document.getElementById('restartBtn').onclick = startGame;
+            document.getElementById('homeBtn').onclick = () => { gameState = 'idle'; showOverlay('idle'); };
+            document.getElementById('endGameBtn').onclick = endGame;
+            document.getElementById('toggleMuteBtn').onclick = () => { 
+                isMuted = !isMuted; 
+                bgMusic.muted = isMuted; 
+                document.getElementById('toggleMuteBtn').textContent = isMuted ? '🔇' : '🔊'; 
+                if(!isMuted) bgMusic.play().catch(()=>{}); 
+            };
+            document.getElementById('musicUpload').onchange = async (e) => {
+                const file = e.target.files[0]; if (!file) return;
+                bgMusic.src = URL.createObjectURL(file);
+                const dbRef = await openDB(); 
+                const tx = dbRef.transaction(AUDIO_STORE_NAME, 'readwrite');
+                tx.objectStore(AUDIO_STORE_NAME).put(file, 'bgMusic');
+            };
+            renderHealth();
+        }
+
+        async function openDB() { return new Promise((res) => { const req = indexedDB.open(AUDIO_DB_NAME, 1); req.onupgradeneeded = () => req.result.createObjectStore(AUDIO_STORE_NAME); req.onsuccess = () => res(req.result); }); }
+        async function setupIndexedDB() {
+            const dbRef = await openDB(); const tx = dbRef.transaction(AUDIO_STORE_NAME, 'readonly');
+            const req = tx.objectStore(AUDIO_STORE_NAME).get('bgMusic');
+            req.onsuccess = () => { if (req.result) { bgMusic.src = URL.createObjectURL(req.result); } else { bgMusic.src = 'https://cdn.pixabay.com/audio/2023/11/24/audio_3d100c5021.mp3'; } };
+        }
+
+        async function startGame() {
+            // [關鍵修復] 行動裝置音訊解鎖：在使用者點擊按鈕的瞬間啟動所有音軌
+            [bgMusic, correctSfx, incorrectSfx].forEach(audio => {
+                audio.play().then(() => {
+                    audio.pause();
+                    audio.currentTime = 0;
+                }).catch(() => {});
+            });
+
+            if (!video.srcObject) {
+                try { 
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { width: 640, height: 480, facingMode: 'user' }, 
+                        audio: false 
+                    }); 
+                    video.srcObject = stream; 
+                    await video.play(); 
+                } catch (e) { 
+                    alert("請允許相機權限");
+                    return;
+                }
+            }
+            
+            gameState = 'playing'; score = 0; health = 3; sessionHealthy = 0; sessionUnhealthy = 0; timeLeft = selectedTimeLimit; gameItems = []; particles = []; lastSpawnTime = performance.now();
+            showOverlay('none'); document.getElementById('endGameBtn').classList.remove('hidden-el');
+            if (secondTimer) clearInterval(secondTimer);
+            if (selectedTimeLimit !== -1) secondTimer = setInterval(() => { 
+                if (gameState !== 'playing') return; timeLeft--; if (timeLeft <= 0) endGame();
+                document.getElementById('hudTimeLeft').textContent = `${Math.floor(timeLeft/60)}:${(timeLeft%60).toString().padStart(2,'0')}`;
+            }, 1000);
+            if (!requestRef) requestAnimationFrame(loop);
+            // 開始背景音樂
+            if (!isMuted) bgMusic.play().catch(()=>{});
+        }
+
+        function endGame() {
+            if (gameState === 'ended') return;
+            gameState = 'ended'; clearInterval(secondTimer);
+            stats.totalHealthyItems += sessionHealthy; stats.totalGamesPlayed += 1; stats.maxHealthyInOneSession = Math.max(stats.maxHealthyInOneSession, sessionHealthy);
+            if (sessionHealthy >= 20) unlockAchievement('expert'); if (score >= 100 && sessionUnhealthy === 0) unlockAchievement('master'); if (stats.totalHealthyItems >= 10) unlockAchievement('rookie');
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(stats)); updateStatsUI();
+            document.getElementById('finalScore').textContent = score; document.getElementById('finalHealthy').textContent = sessionHealthy; showOverlay('ended'); document.getElementById('endGameBtn').classList.add('hidden-el');
+        }
+
+        function unlockAchievement(id) {
+            if (stats.unlockedIds.includes(id)) return; stats.unlockedIds.push(id);
+            const ach = ACHIEVEMENTS.find(a => a.id === id); const toast = document.getElementById('toast');
+            document.getElementById('toastEmoji').textContent = ach.emoji; document.getElementById('toastTitle').textContent = ach.title;
+            toast.classList.remove('hidden-el'); setTimeout(() => toast.classList.add('hidden-el'), 4000);
+            renderAchievements();
+        }
+
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 8; i++) {
+                particles.push({
+                    x, y, 
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    alpha: 1, color
+                });
+            }
+        }
+
+        async function loop(time) {
+            if (gameState === 'playing') {
+                if (detector && video.readyState >= 2) {
+                    const poses = await detector.estimatePoses(video); 
+                    handPositions = [];
+                    // [優化] 更穩定的座標映射計算
+                    const vW = video.videoWidth || 640;
+                    const vH = video.videoHeight || 480;
+                    const sX = GAME_WIDTH / vW;
+                    const sY = GAME_HEIGHT / vH;
+
+                    if (poses.length > 0) {
+                        const lw = poses[0].keypoints.find(k => k.name === 'left_wrist'); 
+                        const rw = poses[0].keypoints.find(k => k.name === 'right_wrist');
+                        // 確保數值有效且在畫面內
+                        if (lw && lw.score > 0.3) {
+                            const px = lw.x * sX; const py = lw.y * sY;
+                            if (!isNaN(px) && !isNaN(py)) handPositions.push({ x: px, y: py });
+                        }
+                        if (rw && rw.score > 0.3) {
+                            const px = rw.x * sX; const py = rw.y * sY;
+                            if (!isNaN(px) && !isNaN(py)) handPositions.push({ x: px, y: py });
+                        }
+                    }
+                }
+                if (time - lastSpawnTime > BASE_SPAWN_INTERVAL) { 
+                    const item = ITEMS[Math.floor(Math.random() * ITEMS.length)];
+                    gameItems.push({ id: Date.now(), x: Math.random() * (GAME_WIDTH - 100) + 50, y: -50, ...item });
+                    lastSpawnTime = time;
+                }
+                gameItems = gameItems.filter(item => {
+                    item.y += ITEM_FALL_SPEED; let hit = false;
+                    handPositions.forEach(hand => { if (Math.sqrt(Math.pow(item.x-hand.x,2)+Math.pow(item.y-hand.y,2)) < COLLISION_RADIUS) hit = true; });
+                    if (hit) {
+                        if (item.type === 'healthy') { 
+                            score += 10; sessionHealthy++; playSfx(correctSfx); 
+                            createParticles(item.x, item.y, '#10b981');
+                        } else { 
+                            health--; sessionUnhealthy++; playSfx(incorrectSfx); 
+                            createParticles(item.x, item.y, '#f43f5e');
+                            renderHealth(); 
+                        }
+                        return false;
+                    }
+                    return item.y <= GAME_HEIGHT;
+                });
+                if (health <= 0) endGame();
+            }
+
+            // 更新粒子
+            particles = particles.filter(p => {
+                p.x += p.vx; p.y += p.vy; p.alpha -= 0.05;
+                return p.alpha > 0;
+            });
+
+            ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT); 
+            ctx.save(); 
+            ctx.scale(-1, 1); 
+            ctx.translate(-GAME_WIDTH, 0);
+
+            if (video.readyState >= 2) { 
+                ctx.globalAlpha = 0.8; 
+                ctx.drawImage(video, 0, 0, GAME_WIDTH, GAME_HEIGHT); 
+            }
+
+            ctx.globalAlpha = 1; 
+            // 繪製粒子
+            particles.forEach(p => {
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill();
+            });
+            ctx.globalAlpha = 1;
+
+            handPositions.forEach(p => { 
+                ctx.beginPath(); ctx.arc(p.x, p.y, 25, 0, Math.PI*2); ctx.fillStyle = 'rgba(129, 140, 248, 0.6)'; ctx.fill(); 
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.stroke(); 
+            });
+            gameItems.forEach(item => { ctx.font = '50px sans-serif'; ctx.fillText(item.emoji, item.x - 25, item.y + 20); });
+            
+            ctx.restore(); 
+            document.getElementById('hudScore').textContent = score;
+            requestRef = requestAnimationFrame(loop);
+        }
+
+        function showOverlay(type) { document.getElementById('idleOverlay').classList.add('hidden-el'); document.getElementById('endOverlay').classList.add('hidden-el'); if (type === 'idle') document.getElementById('idleOverlay').classList.remove('hidden-el'); if (type === 'ended') document.getElementById('endOverlay').classList.remove('hidden-el'); }
+        function renderHealth() { const container = document.getElementById('healthContainer'); container.innerHTML = ''; for(let i=0; i<3; i++) { const b = document.createElement('div'); b.className = `h-2 flex-1 rounded-full transition-all duration-300 ${i < health ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-stone-700'}`; container.appendChild(b); } }
+        function updateStatsUI() { document.getElementById('statTotalHealthy').textContent = stats.totalHealthyItems; document.getElementById('statGamesPlayed').textContent = stats.totalGamesPlayed; document.getElementById('statMaxInOne').textContent = stats.maxHealthyInOneSession; document.getElementById('statConsecutive').textContent = stats.consecutiveDays; }
+        function renderAchievements() { const list = document.getElementById('achievementList'); list.innerHTML = ''; ACHIEVEMENTS.forEach(ach => { const unlocked = stats.unlockedIds.includes(ach.id); const item = document.createElement('div'); item.className = `flex gap-3 items-center ${unlocked ? '' : 'opacity-30 grayscale'}`; item.innerHTML = `<div class='w-10 h-10 rounded-xl flex items-center justify-center ${unlocked ? ach.color : 'bg-stone-200'} text-xl'>${ach.emoji}</div><div class='flex-1 text-left'><p class='text-[10px] font-black leading-none'>${ach.title}</p><p class='text-[8px] text-stone-400 font-bold'>${ach.desc}</p></div>`; list.appendChild(item); }); }
+        
+        init();
+    </script>
+</body>
+</html>
